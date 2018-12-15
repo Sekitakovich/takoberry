@@ -16,7 +16,7 @@ pc = 0
 while True:
 
     memory = psutil.virtual_memory()
-    thisblocks = len(fatman)
+    blocks = len(fatman)
 
     if memory.percent < min:
         try:
@@ -26,11 +26,12 @@ while True:
             print(Fore.YELLOW + 'Give up (allocation fault?)')
             time.sleep(1)
             pass
+        else:
             cc += 1
             pass
 
     elif memory.percent >= max:
-        if thisblocks:
+        if blocks:
             del (fatman[0])  # purge 1 entry
             pc += 1
             pass
@@ -52,5 +53,5 @@ while True:
 
         at = dt.now().strftime('%Y-%m-%d %H:%M:%S')
         print(Style.BRIGHT + Fore.WHITE + '=== Using %.1f%% (%d/%d) holds %d at %s' % (
-        memory.percent, memory.used / size, memory.total / size, thisblocks, at))
+            memory.percent, memory.used / size, memory.total / size, blocks, at))
         time.sleep(1)
