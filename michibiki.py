@@ -2,11 +2,11 @@ import sys
 import serial
 from threading import Thread
 from queue import Queue
-from Michibiki.common import Common
+from common import Common
 
 
 class Process(Thread):
-    def __init__(self, *, quePoint=None):
+    def __init__(self, quePoint=None):
         super().__init__()
         self.setDaemon(True)
         self.q = quePoint
@@ -29,7 +29,7 @@ class Process(Thread):
     #         cs ^= v
     #     return cs
     #
-    def chop(self, *, raw=b''):
+    def chop(self, raw=b''):
         try:
             src = raw.decode()
         except UnicodeDecodeError as e:
