@@ -7,7 +7,7 @@ from common import Common
 
 class Process(Thread):
     def __init__(self, quePoint=None):
-        super().__init__()
+        super(Process, self).__init__()
         self.setDaemon(True)
         self.q = quePoint
         pass
