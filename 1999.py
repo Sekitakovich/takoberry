@@ -1,18 +1,23 @@
 import sys
 import serial
-from threading import Thread
+from threading import (Event, Thread)
 from queue import Queue
 import sqlite3
 from datetime import datetime as dt
+import json
 
 from common import Common
 
 
 class Process(Thread):
     def __init__(self, quePoint=None):
+
         super(Process, self).__init__()
+
         self.setDaemon(True)
         self.q = quePoint
+        self.seqnum = 1
+
         pass
 
     def run(self):
@@ -21,17 +26,6 @@ class Process(Thread):
             self.chop(raw=raw)
         pass
 
-    # def dm2deg(self, *, dm=None):  # GPGGA -> GoogleMaps
-    #     decimal, integer = math.modf(dm / 100.0)
-    #     value = integer + ((decimal / 60.0) * 100.0)
-    #     return value
-    #
-    # def checkSum(self, *, body=b''):
-    #     cs = 0
-    #     for v in body:
-    #         cs ^= v
-    #     return cs
-    #
     def chop(self, raw=b''):
         try:
             src = raw.decode()
@@ -77,13 +71,39 @@ class Process(Thread):
                                         cog = float(item[8]) if item[8] else 0
                                         d = '20%s-%s-%s' % (item[9][:2], item[9][2:4], item[9][4:6])
                                         mode = item[12]
+
+                                        hhmmssff = item[1]
+                                        ddmmyy = item[9]
+
                                         pass
                                     except ValueError as e:
                                         print(e)
                                         pass
                                     else:
+                                        # tt = (
+                                        #     int(ddmmyy[4:6]) + 2000,
+                                        #     int(ddmmyy[2:4]),
+                                        #     int(ddmmyy[0:2]),
+                                        #     int(hhmmssff[0:2]),
+                                        #     int(hhmmssff[2:4]),
+                                        #     int(hhmmssff[4:6]),
+                                        #     int(hhmmssff[7:9]),
+                                        # )
+                                        # print('RMC: tt = %s' % (tt,))
                                         print('+++ %s %f%s:%f%s S:%.2f C:%.2f on %s at %s %s' % (
                                          symbol, lat, ns, lon, ew, sog, cog, mode, d, t))
+                                        # header = Common.format450(sfi='1234', seqnum=self.seqnum)
+                                        # self.seqnum += 1
+                                        # if self.seqnum == 1000:
+                                        #     self.seqnum = 1
+                                        # print(header + raw)
+
+                                        info = {
+                                            'at': str(dt.utcnow().timestamp()),
+                                            'nmea': raw.decode()[:-2],
+                                        }
+                                        Common.News.send(info=info)
+                                        # print(json.dumps(ooo))
                                     pass
                                 else:
                                     print('RMC: invalid')
@@ -149,7 +169,7 @@ def main():
             if (counter % 100) == 0:
                 db.commit()
 
-            print('%s %s' % (at, nmea))
+            # print('%s %s' % (at, nmea))
 
 if __name__ == '__main__':
     main()
