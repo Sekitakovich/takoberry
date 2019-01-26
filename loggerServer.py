@@ -7,6 +7,8 @@ from queue import Queue
 import socketserver
 import socket
 import json
+import sqlite3
+import os
 
 
 class Common(object):
@@ -31,13 +33,13 @@ class Common(object):
         lock = Lock()
         quePoint = {}
 
-        info = {
-            'id': None,
-            'ymd': None,
-            'hms': None,
-            'nmea': None,
-        }
-
+        # info = {
+        #     'id': None,
+        #     'ymd': None,
+        #     'hms': None,
+        #     'nmea': None,
+        # }
+        #
         @classmethod
         def appendClient(cls, *, port=None):
             with cls.lock:
@@ -72,6 +74,45 @@ class Common(object):
         return cs
 
 
+class DBSession(object):
+    def __init__(self):
+
+        # self.ymd = ymd
+        self.db = None
+        self.cursor = None
+        self.counter = 0
+        self.commitInterval = 100
+
+    def insert(self, *, id=None, ymd=None, hms=None, nmea=None):
+
+        query = 'insert into sentence(id,ymd,hms,nmea) values(?,?,?,?)'
+        self.cursor.execute(query, (id, ymd, hms, nmea))
+        self.counter += 1
+        if (self.counter % self.commitInterval) == 0:
+            self.db.commit()
+
+    # def commit(self):
+    #     self.db.commit()
+    #
+    def start(self, *, ymd=None):
+        file = ymd + '.db'
+        if os.path.exists(file):
+            os.remove(file)
+        self.db = sqlite3.connect(file)
+        self.cursor = self.db.cursor()
+        query = "CREATE TABLE 'sentence' ( `id` INTEGER NOT NULL DEFAULT 0 PRIMARY KEY, `ymd` TEXT NOT NULL DEFAULT '', `hms` TEXT NOT NULL DEFAULT '',`nmea` TEXT NOT NULL DEFAULT '' )"
+        self.cursor.execute(query)
+        self.db.commit()
+        self.counter = 0
+
+    def commit(self):
+        self.db.commit()
+
+    def finish(self):
+        self.db.commit()
+        self.db.close()
+
+
 class SampleHandler(socketserver.BaseRequestHandler):
 
     def setup(self):
@@ -104,7 +145,7 @@ class SampleHandler(socketserver.BaseRequestHandler):
 
             info = Common.News.quePoint[self.port].get()
 
-            ooo = json.dumps(info)
+            ooo = json.dumps(info) + '\n'  # Notice!
             try:
                 client.send(ooo.encode())
             except socket.error as e:
@@ -183,6 +224,9 @@ class Main(object):
         self.counter = 0
         self.ymd = dt.utcnow().strftime(Common.DateTime.ymdFormat)
 
+        self.ds = DBSession()
+        self.ds.start(ymd=self.ymd)
+
         self.receiver = Receiver()
         self.receiver.start()
 
@@ -199,6 +243,7 @@ class Main(object):
                 nmea = Common.Serial.quePoint.get()
             except KeyboardInterrupt as e:
                 print('%s: %s' % (self.__class__.__name__, e))
+                self.ds.finish()
                 break
             else:
                 now = dt.utcnow()
@@ -207,10 +252,18 @@ class Main(object):
                 if ymd != self.ymd:
                     self.ymd = ymd
                     self.counter = 0
+                    self.ds.finish()
+                    self.ds.start(ymd=ymd)
 
                 self.counter += 1
 
                 Common.News.put(
+                    id=self.counter,
+                    ymd=now.strftime(Common.DateTime.ymdFormat),
+                    hms=now.strftime(Common.DateTime.hmsFormat),
+                    nmea=nmea)
+
+                self.ds.insert(
                     id=self.counter,
                     ymd=now.strftime(Common.DateTime.ymdFormat),
                     hms=now.strftime(Common.DateTime.hmsFormat),

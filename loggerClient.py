@@ -25,26 +25,34 @@ if __name__ == '__main__':
     s = make_connection(host, port)
     # s.send(b'hello')
 
+    # sf = s.makefile()
+
     id = 0
 
     while True:
         try:
             raw = s.recv(buff)
-            if raw:
-                info = json.loads(raw.decode())
-                counter = info['id']
-                if counter == (id+1):
-                    pass
-                else:
-                    print('Sequence error %d != %d' % (id+1, counter))
-                print('%d: %s %s %s' % (info['id'], info['ymd'], info['hms'], info['nmea']))
-                id = counter
-                pass
-            else:
-                break
         except KeyboardInterrupt as e:
             print(e)
             break
         except socket.error as e:
             print(e)
             break
+        else:
+            src = raw.decode()
+            ooo = src.split('\n')[:-1]
+
+            if len(ooo) > 1:
+                print('mmm...')
+
+            for txt in ooo:
+                info = json.loads(txt)
+                counter = info['id']
+                if counter == (id+1):
+                    pass
+                else:
+                    print('Sequence error %d != %d' % (id+1, counter))
+
+                print('%d: %s %s %s' % (info['id'], info['ymd'], info['hms'], info['nmea']))
+                id = counter
+
