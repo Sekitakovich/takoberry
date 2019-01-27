@@ -1,25 +1,35 @@
+import json
+import os
+import socket
+import socketserver
+import sqlite3
+import time
 from datetime import datetime as dt
-from threading import Thread
+from queue import Empty
+from queue import Queue
 from threading import Event
 from threading import Lock
+from threading import Thread
+
 import serial
-from queue import Queue
-import socketserver
-import socket
-import json
-import sqlite3
-import os
 
 
 class Common(object):
-
     class DateTime(object):
+
+        ymd = None
+        counter = 0
+
         tsFormat = '%Y-%m-%d %H:%M:%S.%f'
         ymdFormat = '%Y-%m-%d'
         hmsFormat = '%H:%M:%S.%f'
 
+    class SQlite3(object):
+        quePoint = Queue()
+
     class Cloud(object):
         port = 12345
+        welcome = Event()
 
     class Serial(object):
 
@@ -48,18 +58,17 @@ class Common(object):
         @classmethod
         def removeClient(cls, *, port=None):
             with cls.lock:
-                del(cls.quePoint[port])
+                del (cls.quePoint[port])
 
         @classmethod
-        def put(cls, *, id=None, ymd=None, hms=None, nmea=None):
-
-            info = {
-                'id': id,
-                'ymd': ymd,
-                'hms': hms,
-                'nmea': nmea,
-            }
-
+        def put(cls, *, info=None):
+            # info = {
+            #     'id': id,
+            #     'ymd': ymd,
+            #     'hms': hms,
+            #     'nmea': nmea,
+            # }
+            #
             with cls.lock:
                 for k, v in cls.quePoint.items():
                     v.put(info)
@@ -74,48 +83,76 @@ class Common(object):
         return cs
 
 
-class DBSession(object):
-    def __init__(self):
+class DBThread(Thread):
+    def __init__(self, *, commitInterval=0):
 
-        # self.ymd = ymd
+        super().__init__()
+        self.setDaemon(True)
+
+        self.ymd = dt.utcnow().strftime(Common.DateTime.ymdFormat)
+        self.counter = 0
+
+        self.commitInterval = commitInterval
         self.db = None
         self.cursor = None
-        self.counter = 0
-        self.commitInterval = 100
 
-    def insert(self, *, id=None, ymd=None, hms=None, nmea=None):
+    def run(self):
 
-        query = 'insert into sentence(id,ymd,hms,nmea) values(?,?,?,?)'
-        self.cursor.execute(query, (id, ymd, hms, nmea))
-        self.counter += 1
-        if (self.counter % self.commitInterval) == 0:
+        print('%s: start' % (self.__class__.__name__,))
+
+        def start():
+            file = self.ymd + '.db'
+            if os.path.exists(file):
+                os.remove(file)
+
+            self.db = sqlite3.connect(file)
+            self.cursor = self.db.cursor()
+            query = "CREATE TABLE 'sentence' ( `id` INTEGER NOT NULL DEFAULT 0 PRIMARY KEY, `ymd` TEXT NOT NULL DEFAULT '', `hms` TEXT NOT NULL DEFAULT '',`nmea` TEXT NOT NULL DEFAULT '' )"
+            self.cursor.execute(query)
             self.db.commit()
+            self.counter = 0
 
-    # def commit(self):
-    #     self.db.commit()
-    #
-    def start(self, *, ymd=None):
-        file = ymd + '.db'
-        if os.path.exists(file):
-            os.remove(file)
-        self.db = sqlite3.connect(file)
-        self.cursor = self.db.cursor()
-        query = "CREATE TABLE 'sentence' ( `id` INTEGER NOT NULL DEFAULT 0 PRIMARY KEY, `ymd` TEXT NOT NULL DEFAULT '', `hms` TEXT NOT NULL DEFAULT '',`nmea` TEXT NOT NULL DEFAULT '' )"
-        self.cursor.execute(query)
-        self.db.commit()
-        self.counter = 0
+        start()
 
-    def commit(self):
-        self.db.commit()
+        while True:
+            try:
+                src = Common.SQlite3.quePoint.get(timeout=5.0)
+            except Empty as e:
+                self.db.commit()
+                print('%s: timeout (%s)' % (self.__class__.__name__, e,))
+                pass
+            else:
 
-    def finish(self):
-        self.db.commit()
-        self.db.close()
+                id = src['id']
+                nmea = src['nmea']
+                ymd = src['ymd']
+                hms = src['hms']
+
+                if ymd != self.ymd:
+                    self.db.commit()
+                    self.ymd = ymd
+                    start()
+
+                query = 'insert into sentence(id,ymd,hms,nmea) values(?,?,?,?)'
+                self.cursor.execute(query, (id, ymd, hms, nmea))
+                self.counter += 1
+
+                if self.commitInterval == 0:
+                    self.db.commit()
+
+                elif (self.counter % self.commitInterval) == 0:
+                    self.db.commit()
+
+        pass
 
 
-class SampleHandler(socketserver.BaseRequestHandler):
+class RoutineHandler(socketserver.BaseRequestHandler):
 
     def setup(self):
+
+        Common.Cloud.welcome.set()
+        # if Common.DBSession.db:
+        #     Common.DBSession.commit()
 
         self.address = self.client_address[0]
         self.port = self.client_address[1]
@@ -124,7 +161,8 @@ class SampleHandler(socketserver.BaseRequestHandler):
 
         # got = self.request.recv(80)
         # name = got.decode()
-        print('%s: connect from client address = %s port = %s' % (self.__class__.__name__, self.address, self.port))
+        print('%s: connect from client address = %s port = %s from %d' % (
+        self.__class__.__name__, self.address, self.port, Common.DateTime.counter))
         pass
 
     def finish(self):
@@ -136,6 +174,14 @@ class SampleHandler(socketserver.BaseRequestHandler):
     def handle(self):
 
         client = self.request
+
+        startUp = {
+            'mode': 'init',
+            'ymd': Common.DateTime.ymd,
+            'id': Common.DateTime.counter,
+        }
+        ooo = json.dumps(startUp) + '\n'
+        client.send(ooo.encode())
 
         while True:
 
@@ -155,29 +201,37 @@ class SampleHandler(socketserver.BaseRequestHandler):
                 pass
 
 
-class SampleServer(socketserver.ThreadingTCPServer):
+class RoutineServer(socketserver.ThreadingTCPServer):
 
     def __init__(self, host='', port=0):
-        super().__init__((host, port), SampleHandler)
+        super().__init__((host, port), RoutineHandler)
 
     def server_bind(self):
-
         self.timeout = 0
         self.allow_reuse_address = True
 
         # self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.socket.bind(self.server_address)
+
+        while True:
+            try:
+                self.socket.bind(self.server_address)
+            except socket.error as e:
+                print('%s: %s' % (self.__class__.__name__, e))
+                time.sleep(1)
+                pass
+            else:
+                break
 
 
 class Sender(Thread):
     def __init__(self):
-
         super().__init__()
         self.setDaemon(True)
 
-        self.server = SampleServer(host='', port=12345)
+        self.server = RoutineServer(host='', port=12345)
 
     def run(self):
+        print('%s: start' % (self.__class__.__name__,))
         self.server.serve_forever()
 
 
@@ -191,6 +245,7 @@ class Receiver(Thread):
         self.port = serial.Serial(device, baudrate=baudrate, timeout=1)
 
     def run(self):
+        print('%s: start' % (self.__class__.__name__,))
 
         while True:
             raw = self.port.readline(1024)
@@ -221,19 +276,25 @@ class Main(object):
 
     def __init__(self):
 
-        self.counter = 0
-        self.ymd = dt.utcnow().strftime(Common.DateTime.ymdFormat)
+        super().__init__()
 
-        self.ds = DBSession()
-        self.ds.start(ymd=self.ymd)
+        self.ymd = dt.utcnow().strftime(Common.DateTime.ymdFormat)
+        self.hms = dt.utcnow().strftime(Common.DateTime.hmsFormat)
+        self.counter = 0
+
+        # self.ds = DBSession()
+        # self.ds.start(ymd=self.ymd)
+
+        self.ds = DBThread(commitInterval=0)
+        self.ds.start()
+
+        # Common.DBSession.start(ymd=self.ymd)
 
         self.receiver = Receiver()
         self.receiver.start()
 
         self.sender = Sender()
         self.sender.start()
-
-        print('%s: start' % (self.__class__.__name__,))
 
     def loop(self):
 
@@ -243,37 +304,33 @@ class Main(object):
                 nmea = Common.Serial.quePoint.get()
             except KeyboardInterrupt as e:
                 print('%s: %s' % (self.__class__.__name__, e))
-                self.ds.finish()
                 break
             else:
                 now = dt.utcnow()
+
                 ymd = now.strftime(Common.DateTime.ymdFormat)
+                self.hms = now.strftime(Common.DateTime.hmsFormat)
 
                 if ymd != self.ymd:
                     self.ymd = ymd
                     self.counter = 0
-                    self.ds.finish()
-                    self.ds.start(ymd=ymd)
 
                 self.counter += 1
+                Common.DateTime.ymd = ymd
+                Common.DateTime.counter = self.counter
 
-                Common.News.put(
-                    id=self.counter,
-                    ymd=now.strftime(Common.DateTime.ymdFormat),
-                    hms=now.strftime(Common.DateTime.hmsFormat),
-                    nmea=nmea)
-
-                self.ds.insert(
-                    id=self.counter,
-                    ymd=now.strftime(Common.DateTime.ymdFormat),
-                    hms=now.strftime(Common.DateTime.hmsFormat),
-                    nmea=nmea)
-
-                # self.counter += 1
+                info = {
+                    'mode': 'info',
+                    'id': self.counter,
+                    'ymd': self.ymd,
+                    'hms': self.hms,
+                    'nmea': nmea,
+                }
+                Common.News.put(info=info)
+                Common.SQlite3.quePoint.put(info)
 
 
 if __name__ == '__main__':
-
     main = Main()
 
     main.loop()
