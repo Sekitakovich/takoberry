@@ -10,16 +10,15 @@ from queue import Queue
 from threading import Event
 from threading import Lock
 from threading import Thread
-
+import argparse
 import serial
 
 
 class Common(object):
-    class DateTime(object):
 
-        ymd = None
-        counter = 0
+    class Daily(object):
 
+        log = []
         tsFormat = '%Y-%m-%d %H:%M:%S.%f'
         ymdFormat = '%Y-%m-%d'
         hmsFormat = '%H:%M:%S.%f'
@@ -33,8 +32,8 @@ class Common(object):
 
     class Serial(object):
 
-        device = '/dev/ttyACM0'
-        baudrate = 9600
+        port = '/dev/ttyACM0'
+        baud = 9600
         quePoint = Queue()
 
     class News(object):
@@ -89,7 +88,7 @@ class DBThread(Thread):
         super().__init__()
         self.setDaemon(True)
 
-        self.ymd = dt.utcnow().strftime(Common.DateTime.ymdFormat)
+        self.ymd = dt.utcnow().strftime(Common.Daily.ymdFormat)
         self.counter = 0
 
         self.commitInterval = commitInterval
@@ -102,14 +101,8 @@ class DBThread(Thread):
 
         def start():
             file = self.ymd + '.db'
-            if os.path.exists(file):
-                os.remove(file)
-
             self.db = sqlite3.connect(file)
             self.cursor = self.db.cursor()
-            query = "CREATE TABLE 'sentence' ( `id` INTEGER NOT NULL DEFAULT 0 PRIMARY KEY, `ymd` TEXT NOT NULL DEFAULT '', `hms` TEXT NOT NULL DEFAULT '',`nmea` TEXT NOT NULL DEFAULT '' )"
-            self.cursor.execute(query)
-            self.db.commit()
             self.counter = 0
 
         start()
@@ -162,7 +155,7 @@ class RoutineHandler(socketserver.BaseRequestHandler):
         # got = self.request.recv(80)
         # name = got.decode()
         print('%s: connect from client address = %s port = %s from %d' % (
-        self.__class__.__name__, self.address, self.port, Common.DateTime.counter))
+        self.__class__.__name__, self.address, self.port, Common.Daily.counter))
         pass
 
     def finish(self):
@@ -177,8 +170,8 @@ class RoutineHandler(socketserver.BaseRequestHandler):
 
         startUp = {
             'mode': 'init',
-            'ymd': Common.DateTime.ymd,
-            'id': Common.DateTime.counter,
+            'ymd': Common.Daily.ymd,
+            'id': Common.Daily.counter,
         }
         ooo = json.dumps(startUp) + '\n'
         client.send(ooo.encode())
@@ -237,12 +230,12 @@ class Sender(Thread):
 
 class Receiver(Thread):
 
-    def __init__(self, device=Common.Serial.device, baudrate=Common.Serial.baudrate):
+    def __init__(self, *, port=Common.Serial.port, baud=Common.Serial.baud):
 
         super().__init__()
 
         self.setDaemon(True)
-        self.port = serial.Serial(device, baudrate=baudrate, timeout=1)
+        self.port = serial.Serial(port, baudrate=baud, timeout=1)
 
     def run(self):
         print('%s: start' % (self.__class__.__name__,))
@@ -274,23 +267,41 @@ class Receiver(Thread):
 
 class Main(object):
 
-    def __init__(self):
+    def __init__(self, *, port=Common.Serial.port, baud=Common.Serial.baud):
 
-        super().__init__()
-
-        self.ymd = dt.utcnow().strftime(Common.DateTime.ymdFormat)
-        self.hms = dt.utcnow().strftime(Common.DateTime.hmsFormat)
+        self.ymd = dt.utcnow().strftime(Common.Daily.ymdFormat)
+        self.hms = dt.utcnow().strftime(Common.Daily.hmsFormat)
         self.counter = 0
 
-        # self.ds = DBSession()
-        # self.ds.start(ymd=self.ymd)
+        '''
+        prepare section
+        '''
+        file = self.ymd + '.db'
+        exists = os.path.exists(file)
+        db = sqlite3.connect(file)
+        cursor = db.cursor()
+        if exists:
+            query = "select max(id) from sentence"
+            cursor.execute(query)
+            ooo = cursor.fetchone()
+            self.counter = int(ooo[0])
+            print('%s: session was restarted from %d' % (self.__class__.__name__, self.counter,))
+            pass
+        else:
+            query = "CREATE TABLE 'sentence' ( `id` INTEGER NOT NULL DEFAULT 0 PRIMARY KEY, `ymd` TEXT NOT NULL DEFAULT '', `hms` TEXT NOT NULL DEFAULT '',`nmea` TEXT NOT NULL DEFAULT '' )"
+            cursor.execute(query)
+            db.commit()
+            pass
+
+        db.close()
+        '''
+        prepare section
+        '''
 
         self.ds = DBThread(commitInterval=0)
         self.ds.start()
 
-        # Common.DBSession.start(ymd=self.ymd)
-
-        self.receiver = Receiver()
+        self.receiver = Receiver(port=port, baud=baud)
         self.receiver.start()
 
         self.sender = Sender()
@@ -308,16 +319,16 @@ class Main(object):
             else:
                 now = dt.utcnow()
 
-                ymd = now.strftime(Common.DateTime.ymdFormat)
-                self.hms = now.strftime(Common.DateTime.hmsFormat)
+                ymd = now.strftime(Common.Daily.ymdFormat)
+                self.hms = now.strftime(Common.Daily.hmsFormat)
 
                 if ymd != self.ymd:
                     self.ymd = ymd
                     self.counter = 0
 
                 self.counter += 1
-                Common.DateTime.ymd = ymd
-                Common.DateTime.counter = self.counter
+                Common.Daily.ymd = ymd
+                Common.Daily.counter = self.counter
 
                 info = {
                     'mode': 'info',
@@ -328,9 +339,20 @@ class Main(object):
                 }
                 Common.News.put(info=info)
                 Common.SQlite3.quePoint.put(info)
+                Common.Daily.log.append(info)
 
 
 if __name__ == '__main__':
-    main = Main()
+
+    parser = argparse.ArgumentParser(
+        description='AIS logger',
+        add_help=True,
+    )
+
+    parser.add_argument('--port', help='name of serial port', default=Common.Serial.port, type=str)
+    parser.add_argument('--baud', help='baud rate', default=Common.Serial.baud, type=int)
+    args = parser.parse_args()
+
+    main = Main(port=args.port, baud=args.baud)
 
     main.loop()
