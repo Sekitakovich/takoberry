@@ -1,7 +1,7 @@
 import serial
 
 # from Michibiki.common import Common
-import common
+from Backups import common
 
 device = '/dev/serial0'
 

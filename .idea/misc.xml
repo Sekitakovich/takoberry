@@ -6,7 +6,7 @@
   <component name="NodePackageJsonFileManager">
     <packageJsonPaths />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Remote Python 3.7.0 (sftp://pi@takoberry:22/usr/local/bin/python)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="Remote Python 3.7.5 (sftp://pi@takoberry:22/home/pi/.pyenv/versions/3.7.5/bin/python)" project-jdk-type="Python SDK" />
   <component name="PyPackaging">
     <option name="earlyReleasesAsUpgrades" value="true" />
   </component>

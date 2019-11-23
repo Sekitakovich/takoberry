@@ -2,7 +2,7 @@ import sys
 import serial
 from threading import Thread
 from queue import Queue
-from common import Common
+from Backups.common import Common
 
 
 class Process(Thread):

@@ -1,12 +1,11 @@
 import sys
 import serial
-from threading import (Event, Thread)
+from threading import (Thread)
 from queue import Queue
 import sqlite3
 from datetime import datetime as dt
-import json
 
-from common import Common
+from Backups.common import Common
 
 
 class Process(Thread):

@@ -1,6 +1,6 @@
 import serial
 
-from common import Common
+from Backups.common import Common
 
 
 device = '/dev/serial0'
