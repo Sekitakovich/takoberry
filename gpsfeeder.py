@@ -12,6 +12,7 @@ from datetime import datetime as dt
 from datetime import timedelta
 from logging import getLogger
 import argparse
+import RPi.GPIO as GPIO
 
 from log import LogConfigure
 
@@ -47,6 +48,52 @@ class Plus(object):
 class Location(object):
     must: Must = Must()
     plus: Plus = Plus()
+
+
+class LEDController(Thread):
+
+    def __init__(self, *, pin: int):
+
+        super().__init__()
+        self.daemon = True
+
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(pin, GPIO.OUT)
+        self.pin = pin
+
+        self.qp = Queue()
+
+    def typeA(self):
+
+        for x in range(2):
+            GPIO.output(self.pin, True)
+            time.sleep(0.1)
+            GPIO.output(self.pin, False)
+            time.sleep(0.1)
+
+    def typeB(self):
+
+        GPIO.output(self.pin, True)
+        time.sleep(0.5)
+        GPIO.output(self.pin, False)
+
+    def run(self) -> None:
+        while True:
+            type = self.qp.get()
+            if type == 'typeA':
+                self.typeA()
+            else:
+                self.typeB()
+
+    def end(self):
+
+        GPIO.output(self.pin, False)
+        GPIO.cleanup()
+
+    def __del__(self):
+
+        GPIO.output(self.pin, False)
+        GPIO.cleanup()
 
 
 class Driver(Thread):
@@ -122,7 +169,7 @@ class Driver(Thread):
 
         def atTXT():
 
-            self.logger.debug(msg=item)
+            self.logger.debug(msg=item[4])
 
         window: Dict[str, any] = {
             'RMC': atRMC,
@@ -299,6 +346,7 @@ class GPSFeeder(object):
             self.receiver = Receiver(sp=sp, qp=self.qp)
             self.driver = Driver(sp=sp, qp=self.qp)
             self.sender = Sender(url=url, sq=self.sq)
+            self.ledController = LEDController(pin=26)
 
             self.intervalSecs: int = 1
 
@@ -332,6 +380,7 @@ class GPSFeeder(object):
         self.receiver.start()
         self.driver.start()
         self.sender.start()
+        self.ledController.start()
 
         # time.sleep(self.intervalSecs)
 
@@ -339,29 +388,37 @@ class GPSFeeder(object):
 
         while True:
 
-            measuredCunter = self.driver.counter
-            if measuredCunter != lastCounter:  # changed
-                isGPS = True
-                if (self.loopCounter % timing) == 0:
-                    self.sendThis()
-                timing = self.calcTiming(kmh=int(self.driver.location.plus.kmh))
-                if timing != lastTiming:
-                    self.logger.debug('timing was changed %d -> %d' % (lastTiming, timing))
-                    lastTiming = timing
-                lastCounter = measuredCunter
-            else:
-                if isGPS:
-                    isGPS = False
-                    timing = 1
-                    lastTiming = 1
-                    # self.sendThis(status=False)
-                    self.logger.critical(msg='GPS lost')
+            try:
+                measuredCunter = self.driver.counter
+                if measuredCunter != lastCounter:  # changed
+                    self.ledController.qp.put('typeA')
+                    isGPS = True
+                    if (self.loopCounter % timing) == 0:
+                        self.sendThis()
+                    timing = self.calcTiming(kmh=int(self.driver.location.plus.kmh))
+                    if timing != lastTiming:
+                        self.logger.debug('timing was changed %d -> %d' % (lastTiming, timing))
+                        lastTiming = timing
+                    lastCounter = measuredCunter
                 else:
-                    self.logger.debug(msg='Waiting (%d)' % (self.loopCounter,))
-                    pass
+                    self.ledController.qp.put('typeB')
+                    if isGPS:
+                        isGPS = False
+                        timing = 1
+                        lastTiming = 1
+                        # self.sendThis(status=False)
+                        self.logger.debug(msg='GPS lost')
+                    else:
+                        self.logger.debug(msg='Waiting (%d)' % (self.loopCounter,))
+                        pass
 
-            time.sleep(self.intervalSecs)
-            self.loopCounter += 1
+                time.sleep(self.intervalSecs)
+                self.loopCounter += 1
+            except (KeyboardInterrupt,) as e:
+                self.ledController.end()
+                break
+            else:
+                pass
 
 
 if __name__ == '__main__':
