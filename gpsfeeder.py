@@ -111,7 +111,7 @@ class LEDController(Thread):
 
 class Driver(Thread):
 
-    def __init__(self, *, sp: Serial, qp: Queue):
+    def __init__(self, *, sp: Serial, qp: Queue, dump: bool):
 
         super().__init__()
         self.daemon = True
@@ -126,6 +126,7 @@ class Driver(Thread):
         self.SYSdatetimeformat: str = '%Y-%m-%d %H:%M:%S'
 
         self.at: str = dt.now().strftime(self.SYSdatetimeformat)  # notice!
+        self.dump = dump
         self.counter: int = 0
 
     def run(self) -> None:
@@ -194,6 +195,8 @@ class Driver(Thread):
         }
 
         try:
+            if self.dump:
+                self.logger.debug(msg=item)
             suffix = item[0][2:]
             if suffix in window.keys():
                 window[suffix]()
@@ -328,12 +331,14 @@ class Sender(Thread):
 
 class GPSFeeder(object):
 
-    def __init__(self, *, port: str, baudrate: int, account: str, url: str):
+    def __init__(self, *, port: str, baudrate: int, account: str, url: str, dump: bool):
 
         self.logger = getLogger('Log')
 
-        self.logger.info(msg='Start')
-
+        self.dump = dump
+        self.port = port
+        self.baudrate = baudrate
+        self.url = url
         self.account = account
         self.ready: bool = True
         self.loopCounter: int = 0
@@ -364,7 +369,7 @@ class GPSFeeder(object):
         else:
 
             self.receiver = Receiver(sp=sp, qp=self.qp)
-            self.driver = Driver(sp=sp, qp=self.qp)
+            self.driver = Driver(sp=sp, qp=self.qp, dump=self.dump)
             self.sender = Sender(url=url, sq=self.sq)
             self.led = LEDController(pin=26)
 
@@ -391,6 +396,8 @@ class GPSFeeder(object):
         return value
 
     def mainLoop(self):
+
+        self.logger.info(msg='Start on %s:%d %s@%s' % (self.port, self.baudrate, self.account, self.url))
 
         lastCounter: int = 0
         timing: int = 1
@@ -419,7 +426,7 @@ class GPSFeeder(object):
                         pass
                     timing = self.calcTiming(kmh=int(self.driver.location.plus.kmh))
                     if timing != lastTiming:
-                        self.logger.debug('timing was changed %d -> %d' % (lastTiming, timing))
+                        self.logger.debug('timing was shifted %d -> %d' % (lastTiming, timing))
                         lastTiming = timing
                     else:
                         pass
@@ -447,17 +454,28 @@ class GPSFeeder(object):
 
 if __name__ == '__main__':
 
+    version: str = '1.0'
+
     account: str = 'sekitakovich'
     # url: str = 'http://127.0.0.1:8080/post'
     url: str = 'http://192.168.3.6/post'
-    port: str = '/dev/ttyACM0'
-    # port: str = '/dev/serial0'
+    # port: str = '/dev/ttyACM0'
+    port: str = '/dev/ttyUSB0'
+    baudrate: int = 9600
+
+    parser = argparse.ArgumentParser(description='GPS autofeeder')
+    parser.add_argument('-p', '--port', help='port name for sensor service (%s)' % port, type=str, default=port)
+    parser.add_argument('-b', '--baudrate', help='baudrate for sensor service (%d)' % baudrate, type=int, default=baudrate)
+    parser.add_argument('-u', '--url', help='url for locationserver (%s)' % url, type=str, default=url)
+    parser.add_argument('-a', '--account', help='account for locationserver (%s)' % account, type=str, default=account)
+    parser.add_argument('-d', '--dump', help='dump sentence realtime', action='store_true')
+    parser.add_argument('-v', '--version', help='print version', action='version', version=version)
+
+    args = parser.parse_args()
 
     LogConfigure(file='logs/client.log')
 
-    feeder = GPSFeeder(port=port, baudrate=9600, account=account, url=url)
-
-    # print(json.dumps(asdict(feeder.driver.location), indent=2))
+    feeder = GPSFeeder(port=args.port, baudrate=args.baudrate, account=args.account, url=args.url, dump=args.dump)
 
     if feeder.ready:
         feeder.mainLoop()
