@@ -9,6 +9,7 @@ import time
 import json
 from threading import Thread
 import websocket
+import argparse
 
 from log import LogConfigure
 
@@ -38,7 +39,7 @@ class BroadCaster(Thread):
             self.ready = True
             self.logger.debug(msg='start')
 
-        url = 'ws://127.0.0.1/%d' % port
+        url = 'ws://127.0.0.1:%d/ws' % port
         self.ws = websocket.WebSocketApp(url,
                                     on_open=onOpen, on_error=onError, on_close=onClose, on_message=onMessage)
 
@@ -61,8 +62,11 @@ class IPTables(object):
 
 class Server(object):
 
-    def __init__(self, *, port: int = 80):
+    def __init__(self, *, port: int = 80, tiles: str):
+
         self.logger = getLogger('Log')
+
+        self.tiles = tiles
         self.api = responder.API(debug=False)
 
         self.wsmember: Dict[str, WebSocket] = {}
@@ -70,9 +74,20 @@ class Server(object):
         self.broadcaster.start()
 
         self.api.add_route('/post', self.insert)
+        self.api.add_route('/tiles/{name}', self.OSM)
         self.api.add_route('/ws', self.websocketServer, websocket=True)
 
         self.api.run(port=port, address='0.0.0.0')
+
+    def OSM(self, message: responder.Request, reply: responder.Response, *, name: str):
+
+        file: str = '%s/%s' % (self.tiles, name)
+
+        try:
+            with open(file, 'rb') as f:
+                reply.content = f.read()
+        except (OSError,) as e:
+            reply.status_code = 404
 
     async def websocketServer(self, ws: WebSocket):
 
@@ -112,6 +127,18 @@ class Server(object):
 
 
 if __name__ == '__main__':
+
     logconfig = LogConfigure(file='logs/server.log', encoding='utf-8')
 
-    server = Server(port=80)
+    port: int = 80
+    pathForTiles: str = 'E:/OSM/tiles'
+    version: str = '1.0'
+
+    parser = argparse.ArgumentParser(description='Location server')
+    parser.add_argument('-p', '--port', help='port name for HTTP service (%s)' % port, type=str, default=port)
+    parser.add_argument('-t', '--tiles', help='path for OSM tiles (%s)' % pathForTiles, type=str, default=pathForTiles)
+    parser.add_argument('-v', '--version', help='print version', action='version', version=version)
+
+    args = parser.parse_args()
+
+    server = Server(port=args.port, tiles=args.tiles)

@@ -111,7 +111,7 @@ class LEDController(Thread):
 
 class Driver(Thread):
 
-    def __init__(self, *, sp: Serial, qp: Queue, dump: bool):
+    def __init__(self, *, sp: Serial, qp: Queue, dump: bool, cs: str):
 
         super().__init__()
         self.daemon = True
@@ -121,6 +121,7 @@ class Driver(Thread):
 
         self.sp = sp
         self.qp = qp
+        self.cs = cs  # cycle suffix
 
         self.GPSdatetimeFormat: str = '%d-%d-%d %d:%d:%d'
         self.SYSdatetimeformat: str = '%Y-%m-%d %H:%M:%S'
@@ -136,7 +137,7 @@ class Driver(Thread):
             if len(sentence):
                 self.loadSentence(item=sentence)
             else:
-                self.logger.critical(msg='invalid sentence')
+                self.logger.critical(msg='invalid sentence (%s)' % nmea.encode())
 
     def loadSentence(self, *, item: List[str]):
 
@@ -161,7 +162,7 @@ class Driver(Thread):
                 self.location.must.mode = item[12]
 
                 self.at = jst
-                self.counter += 1
+                # self.counter += 1
 
         def atGGA():
 
@@ -186,11 +187,17 @@ class Driver(Thread):
             # self.logger.debug(msg=item[4])
             pass
 
+        def atZDA():
+
+            # self.logger.debug(msg=item[4])
+            pass
+
         window: Dict[str, any] = {
             'RMC': atRMC,
             'GGA': atGGA,
             'VTG': atVTG,
             'GSA': atGSA,
+            'ZDA': atZDA,
             'TXT': atTXT,
         }
 
@@ -200,6 +207,8 @@ class Driver(Thread):
             suffix = item[0][2:]
             if suffix in window.keys():
                 window[suffix]()
+                if suffix == self.cs:
+                    self.counter += 1
         except (IndexError, ValueError) as e:
             self.logger.error(msg=e)
         else:
@@ -331,7 +340,7 @@ class Sender(Thread):
 
 class GPSFeeder(object):
 
-    def __init__(self, *, port: str, baudrate: int, account: str, url: str, dump: bool):
+    def __init__(self, *, port: str, baudrate: int, account: str, url: str, dump: bool, cs: str):
 
         self.logger = getLogger('Log')
 
@@ -340,6 +349,8 @@ class GPSFeeder(object):
         self.baudrate = baudrate
         self.url = url
         self.account = account
+        self.cs = suffix
+
         self.ready: bool = True
         self.loopCounter: int = 0
         self.sends: int = 0
@@ -369,7 +380,7 @@ class GPSFeeder(object):
         else:
 
             self.receiver = Receiver(sp=sp, qp=self.qp)
-            self.driver = Driver(sp=sp, qp=self.qp, dump=self.dump)
+            self.driver = Driver(sp=sp, qp=self.qp, dump=self.dump, cs=self.cs)
             self.sender = Sender(url=url, sq=self.sq)
             self.led = LEDController(pin=26)
 
@@ -462,12 +473,14 @@ if __name__ == '__main__':
     # port: str = '/dev/ttyACM0'
     port: str = '/dev/ttyUSB0'
     baudrate: int = 9600
+    suffix: str = 'ZDA'
 
     parser = argparse.ArgumentParser(description='GPS autofeeder')
     parser.add_argument('-p', '--port', help='port name for sensor service (%s)' % port, type=str, default=port)
     parser.add_argument('-b', '--baudrate', help='baudrate for sensor service (%d)' % baudrate, type=int, default=baudrate)
     parser.add_argument('-u', '--url', help='url for locationserver (%s)' % url, type=str, default=url)
     parser.add_argument('-a', '--account', help='account for locationserver (%s)' % account, type=str, default=account)
+    parser.add_argument('-s', '--suffix', help='suffix of cycle period (%s)' % suffix, type=str, default=suffix)
     parser.add_argument('-d', '--dump', help='dump sentence realtime', action='store_true')
     parser.add_argument('-v', '--version', help='print version', action='version', version=version)
 
@@ -475,7 +488,8 @@ if __name__ == '__main__':
 
     LogConfigure(file='logs/client.log')
 
-    feeder = GPSFeeder(port=args.port, baudrate=args.baudrate, account=args.account, url=args.url, dump=args.dump)
+    feeder = GPSFeeder(port=args.port, baudrate=args.baudrate,
+                       account=args.account, url=args.url, dump=args.dump, cs=args.suffix)
 
     if feeder.ready:
         feeder.mainLoop()
