@@ -62,8 +62,22 @@ class LEDController(Thread):
         self.pin = pin
 
         self.qp = Queue()
+        self.locker = Lock()
 
-    def typeA(self):
+        self.funcs: Dict[str, any] = {
+            'on': self.on,
+            'off': self.off,
+            'typeA': self.typeA,
+            'typeB': self.typeB,
+        }
+
+    def on(self):
+        GPIO.output(self.pin, True)
+
+    def off(self):
+        GPIO.output(self.pin, False)
+
+    def typeB(self):
 
         for x in range(2):
             GPIO.output(self.pin, True)
@@ -71,19 +85,18 @@ class LEDController(Thread):
             GPIO.output(self.pin, False)
             time.sleep(0.1)
 
-    def typeB(self):
+    def typeA(self):
 
         GPIO.output(self.pin, True)
-        time.sleep(0.5)
+        time.sleep(0.2)
         GPIO.output(self.pin, False)
 
     def run(self) -> None:
         while True:
             type = self.qp.get()
-            if type == 'typeA':
-                self.typeA()
-            else:
-                self.typeB()
+            if type in self.funcs.keys():
+                with self.locker:
+                    self.funcs[type]()
 
     def end(self):
 
@@ -169,7 +182,8 @@ class Driver(Thread):
 
         def atTXT():
 
-            self.logger.debug(msg=item[4])
+            # self.logger.debug(msg=item[4])
+            pass
 
         window: Dict[str, any] = {
             'RMC': atRMC,
@@ -249,8 +263,12 @@ class Sender(Thread):
 
         self.stack: List[str] = []
         self.retryInterval: int = 5
+
         self.retryThread = Thread(target=self.retryCycle, daemon=True)
         self.retryThread.start()
+
+        self.led = LEDController(pin=19)
+        self.led.start()
 
     def upload(self, *, content: str) -> bool:
 
@@ -300,8 +318,10 @@ class Sender(Thread):
             content: str = json.dumps(src, indent=2)
 
             if self.upload(content=content):
+                self.led.qp.put('typeA')
                 pass
             else:
+                self.led.qp.put('typeB')
                 with self.locker:
                     self.stack.append(content)
 
@@ -346,7 +366,7 @@ class GPSFeeder(object):
             self.receiver = Receiver(sp=sp, qp=self.qp)
             self.driver = Driver(sp=sp, qp=self.qp)
             self.sender = Sender(url=url, sq=self.sq)
-            self.ledController = LEDController(pin=26)
+            self.led = LEDController(pin=26)
 
             self.intervalSecs: int = 1
 
@@ -380,7 +400,7 @@ class GPSFeeder(object):
         self.receiver.start()
         self.driver.start()
         self.sender.start()
-        self.ledController.start()
+        self.led.start()
 
         # time.sleep(self.intervalSecs)
 
@@ -391,17 +411,21 @@ class GPSFeeder(object):
             try:
                 measuredCunter = self.driver.counter
                 if measuredCunter != lastCounter:  # changed
-                    self.ledController.qp.put('typeA')
+                    self.led.qp.put('on')
                     isGPS = True
                     if (self.loopCounter % timing) == 0:
                         self.sendThis()
+                    else:
+                        pass
                     timing = self.calcTiming(kmh=int(self.driver.location.plus.kmh))
                     if timing != lastTiming:
                         self.logger.debug('timing was changed %d -> %d' % (lastTiming, timing))
                         lastTiming = timing
+                    else:
+                        pass
                     lastCounter = measuredCunter
                 else:
-                    self.ledController.qp.put('typeB')
+                    self.led.qp.put('typeB')
                     if isGPS:
                         isGPS = False
                         timing = 1
@@ -409,13 +433,13 @@ class GPSFeeder(object):
                         # self.sendThis(status=False)
                         self.logger.debug(msg='GPS lost')
                     else:
-                        self.logger.debug(msg='Waiting (%d)' % (self.loopCounter,))
+                        # self.logger.debug(msg='Waiting (%d)' % (self.loopCounter,))
                         pass
 
                 time.sleep(self.intervalSecs)
                 self.loopCounter += 1
             except (KeyboardInterrupt,) as e:
-                self.ledController.end()
+                self.led.end()
                 break
             else:
                 pass
@@ -427,8 +451,9 @@ if __name__ == '__main__':
     # url: str = 'http://127.0.0.1:8080/post'
     url: str = 'http://192.168.3.6/post'
     port: str = '/dev/ttyACM0'
+    # port: str = '/dev/serial0'
 
-    logconfig = LogConfigure(file='logs/client.log', encoding='cp932')
+    LogConfigure(file='logs/client.log')
 
     feeder = GPSFeeder(port=port, baudrate=9600, account=account, url=url)
 

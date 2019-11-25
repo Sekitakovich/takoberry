@@ -1,3 +1,4 @@
+import logging
 from logging import config
 
 
@@ -42,3 +43,14 @@ class LogConfigure(object):
         }
 
         config.dictConfig(self._config)
+
+
+if __name__ == '__main__':
+
+    LogConfigure(file='sample.log')
+
+    logger = logging.getLogger('Log')
+
+    logger.debug(msg='DEBUG')
+    logger.error(msg='ERROR')
+    logger.info(msg='INFO')
