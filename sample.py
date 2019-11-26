@@ -1,9 +1,14 @@
-import logging
+import json
 
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger('Log')
-# logger.setLevel(logging.DEBUG)
+body = {
+    'lat': 1.2,
+    'lng': 3.4,
+    'spd': 60,
+}
 
-logger.debug(msg='DEBUG')
-logger.error(msg='ERROR')
-logger.info(msg='INFO')
+pack = []
+
+for a in range(5):
+    pack.append(body)
+
+print(json.dumps(pack))

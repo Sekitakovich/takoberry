@@ -1,6 +1,7 @@
 from serial import Serial, SerialException, SerialTimeoutException
 from typing import List, Dict
 from threading import Thread, Lock
+from multiprocessing import Process, Queue as MPQueue
 from queue import Queue
 from functools import reduce
 from operator import xor
@@ -13,6 +14,7 @@ from datetime import timedelta
 from logging import getLogger
 import argparse
 import RPi.GPIO as GPIO
+from pprint import pprint
 
 from log import LogConfigure
 
@@ -273,10 +275,13 @@ class Sender(Thread):
         }
         self.online: bool = True
 
-        self.stack: List[str] = []
-        self.retryInterval: int = 5
+        self.feedFIFO: List[str] = []
+        self.lastFeedAT = dt.now()
+        self.retryInterval: int = 15
+        self.retryPassedSecs: int = 30
+        self.maxHolds: int = 3600
 
-        self.retryThread = Thread(target=self.retryCycle, daemon=True)
+        self.retryThread = Thread(target=self.retryStage, daemon=True)
         self.retryThread.start()
 
         self.led = LEDController(pin=19)
@@ -286,7 +291,7 @@ class Sender(Thread):
 
         success: bool = True
         try:
-            response = requests.post(self.url, content, headers=self.headers, timeout=2.5)
+            response = requests.post(self.url, data=content, headers=self.headers, timeout=1.0)
         except (
                 requests.exceptions.Timeout, requests.exceptions.ConnectionError,
                 requests.exceptions.HTTPError) as e:
@@ -303,39 +308,40 @@ class Sender(Thread):
 
         return success
 
-    def retryCycle(self):
+    def retryStage(self):
 
         while True:
             time.sleep(self.retryInterval)
-            if self.online:
-                with self.locker:
-                    while True:
-                        remain: int = len(self.stack)
-                        if remain:
-                            self.logger.debug('Remain %d' % remain)
-                            content = self.stack[0]
-                            if self.upload(content=content):
-                                del (self.stack[0])
-                                self.logger.debug('send OK')
-                            else:
-                                break
-                        else:
-                            break
+            if len(self.feedFIFO):
+                if (dt.now() - self.lastFeedAT).total_seconds() > self.retryPassedSecs:
+                    self.logger.debug('Holding %d record(s)' % len(self.feedFIFO))
+                    if self.session():
+                        self.logger.debug(msg='Success')
+
+    def session(self) -> bool:
+        success: bool = False
+        with self.locker:
+            content: str = json.dumps(self.feedFIFO, indent=0)
+            if self.upload(content=content):
+                self.lastFeedAT = dt.now()
+                self.feedFIFO.clear()
+                success = True
+        self.led.qp.put('typeA' if success else 'typeB')
+        return success
 
     def run(self) -> None:
 
         while True:
 
             src = self.sq.get()
-            content: str = json.dumps(src, indent=2)
-
-            if self.upload(content=content):
-                self.led.qp.put('typeA')
+            with self.locker:
+                if len(self.feedFIFO) == self.maxHolds:  # buffer full?
+                    del (self.feedFIFO[0])
+                    self.logger.critical(msg='feed buffer FULL (%d)' % self.maxHolds)
+                self.feedFIFO.append(src.copy())  # notice! use copy
+            if self.session():
+                # self.logger.debug(msg='Success')
                 pass
-            else:
-                self.led.qp.put('typeB')
-                with self.locker:
-                    self.stack.append(content)
 
 
 class GPSFeeder(object):
@@ -365,8 +371,13 @@ class GPSFeeder(object):
         self.sq = Queue()
 
         self.sleepTable: List[dict] = [
-            {'max': 5, 'val': 60 * 1},
-            {'max': 10, 'val': 30 * 1},
+            # {'max': 5, 'val': 60 * 1},
+            # {'max': 10, 'val': 30 * 1},
+            # {'max': 20, 'val': 4},
+            # {'max': 40, 'val': 3},
+            # {'max': 80, 'val': 2},
+            {'max': 5, 'val': 15},
+            {'max': 10, 'val': 30},
             {'max': 20, 'val': 4},
             {'max': 40, 'val': 3},
             {'max': 80, 'val': 2},
@@ -429,7 +440,7 @@ class GPSFeeder(object):
             try:
                 measuredCunter = self.driver.counter
                 if measuredCunter != lastCounter:  # changed
-                    self.led.qp.put('on')
+                    self.led.qp.put('typeA')
                     isGPS = True
                     if (self.loopCounter % timing) == 0:
                         self.sendThis()
@@ -473,11 +484,12 @@ if __name__ == '__main__':
     # port: str = '/dev/ttyACM0'
     port: str = '/dev/ttyUSB0'
     baudrate: int = 9600
-    suffix: str = 'ZDA'
+    suffix: str = 'RMC'
 
     parser = argparse.ArgumentParser(description='GPS autofeeder')
     parser.add_argument('-p', '--port', help='port name for sensor service (%s)' % port, type=str, default=port)
-    parser.add_argument('-b', '--baudrate', help='baudrate for sensor service (%d)' % baudrate, type=int, default=baudrate)
+    parser.add_argument('-b', '--baudrate', help='baudrate for sensor service (%d)' % baudrate, type=int,
+                        default=baudrate)
     parser.add_argument('-u', '--url', help='url for locationserver (%s)' % url, type=str, default=url)
     parser.add_argument('-a', '--account', help='account for locationserver (%s)' % account, type=str, default=account)
     parser.add_argument('-s', '--suffix', help='suffix of cycle period (%s)' % suffix, type=str, default=suffix)

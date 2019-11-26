@@ -116,14 +116,13 @@ class Server(object):
         del self.wsmember[key]
 
     async def insert(self, message: responder.Request, reply: responder.Response):
-        try:  # これ通用してない
-            postBody = await message.media()
-        except (TypeError,) as e:
-            self.logger.error(msg=e)
-        else:
-            reply.content = b'OK'
-            self.broadcaster.send(message=json.dumps(postBody))
-            pprint(postBody)
+        postBody = await message.media()
+        total = len(postBody)
+        for index, record in enumerate(postBody):
+            pprint('%d: %s' % (index, record))
+
+        reply.content = b'Received %d record(s)' % total
+        self.broadcaster.send(message=json.dumps(postBody))
 
 
 if __name__ == '__main__':
