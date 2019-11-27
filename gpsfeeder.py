@@ -135,12 +135,11 @@ class Driver(Thread):
 
     def run(self) -> None:
         while True:
-            nmea: str = self.qp.get()
-            sentence = self.checkNMEA(nmea=nmea)
+            sentence = self.qp.get()
             if len(sentence):
                 self.loadSentence(item=sentence)
             else:
-                self.logger.critical(msg='invalid sentence (%s)' % nmea.encode())
+                pass
 
     def loadSentence(self, *, item: List[str]):
 
@@ -240,47 +239,23 @@ class Driver(Thread):
         else:
             pass
 
-    def checkNMEA(self, *, nmea: str) -> list:
-
-        result = []
-
-        part: list = nmea.split('*')
-        if len(part) == 2:
-            try:
-                body: str = part[0][1:]
-                your: int = int(part[1], 16)
-                mine: int = reduce(xor, body.encode(), 0)
-            except (IndexError, ValueError) as e:
-                self.logger.error(msg=e)
-            else:
-                if your == mine:
-                    return body.split(',')
-
-        return result
-
-
-class Receiver(Thread):
-
-    def __init__(self, *, sp: Serial, qp: Queue):
-
-        super().__init__()
-        self.daemon = True
-        self.logger = getLogger('Log')
-
-        self.sp = sp
-        self.qp = qp
-
-    def run(self) -> None:
-
-        while True:
-            try:
-                raw: bytes = self.sp.readline()
-            except (SerialException, SerialTimeoutException) as e:
-                self.logger.error(msg=e)
-            else:
-                if len(raw) >= 2:
-                    text: str = raw[:-2].decode()
-                    self.qp.put(text)
+    # def checkNMEA(self, *, nmea: str) -> list:
+    #
+    #     result = []
+    #
+    #     part: list = nmea.split('*')
+    #     if len(part) == 2:
+    #         try:
+    #             body: str = part[0][1:]
+    #             your: int = int(part[1], 16)
+    #             mine: int = reduce(xor, body.encode(), 0)
+    #         except (IndexError, ValueError) as e:
+    #             self.logger.error(msg=e)
+    #         else:
+    #             if your == mine:
+    #                 return body.split(',')
+    #
+    #     return result
 
 
 class Sender(Thread):
@@ -372,6 +347,57 @@ class Sender(Thread):
                 # self.logger.debug(msg='Success (%d)' % many)
                 pass
             self.lastFeedAT = dt.now()
+
+
+class Receiver(Thread):
+
+    def __init__(self, *, sp: Serial, qp: Queue):
+
+        super().__init__()
+        self.daemon = True
+        self.logger = getLogger('Log')
+
+        self.sp = sp
+        self.qp = qp
+
+        self.cp = Queue()
+        self.checker = Thread(target=self.checkSentence, daemon=True)
+        self.checker.start()
+
+    def checkSentence(self):
+
+        while True:
+            raw: bytes = self.cp.get()
+            if len(raw) > 2:  # CR/LF
+                sentence: str = raw[:-2].decode()
+                part: list = sentence.split('*')
+                if len(part) == 2:
+                    try:
+                        body: str = part[0][1:]
+                        your: int = int(part[1], 16)
+                        mine: int = reduce(xor, body.encode(), 0)
+                    except (IndexError, ValueError) as e:
+                        self.logger.error(msg=e)
+                    else:
+                        if your == mine:
+                            self.qp.put(body.split(','))
+                else:
+                    self.logger.debug(msg='invalid sentence (%s)' % raw)
+                    pass
+            else:
+                self.logger.debug(msg='invalid sentence (%s)' % raw)
+                pass
+
+    def run(self) -> None:
+
+        while True:
+            try:
+                raw: bytes = self.sp.readline()
+            except (SerialException, SerialTimeoutException) as e:
+                self.logger.error(msg=e)
+            else:
+                if raw:
+                    self.cp.put(raw)
 
 
 class GPSFeeder(object):
