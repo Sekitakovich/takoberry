@@ -13,6 +13,7 @@ from datetime import datetime as dt
 from datetime import timedelta
 from logging import getLogger
 import argparse
+import configparser
 import RPi.GPIO as GPIO
 from pprint import pprint
 
@@ -28,6 +29,7 @@ class Must(object):
     ns: str = ''
     ew: str = ''
     utc: str = ''
+    jst: str = ''
     mode: str = ''  # N<A<D<E
 
 
@@ -128,7 +130,6 @@ class Driver(Thread):
         self.GPSdatetimeFormat: str = '%d-%d-%d %d:%d:%d'
         self.SYSdatetimeformat: str = '%Y-%m-%d %H:%M:%S'
 
-        self.at: str = dt.now().strftime(self.SYSdatetimeformat)  # notice!
         self.dump = dump
         self.counter: int = 0
 
@@ -143,9 +144,12 @@ class Driver(Thread):
 
     def loadSentence(self, *, item: List[str]):
 
-        def atRMC():
+        def atRMC() -> bool:
+
+            valid: bool = False
 
             if item[2] == 'A':
+                valid = True
                 ymd = item[9]
                 hms = item[1]
                 utcSring: str = self.GPSdatetimeFormat % (
@@ -154,6 +158,7 @@ class Driver(Thread):
                 jst = (dt.strptime(utcSring, self.SYSdatetimeformat) + timedelta(hours=9)).strftime(
                     self.SYSdatetimeformat)
                 self.location.must.utc = utcSring
+                self.location.must.jst = jst
 
                 self.location.must.lat = float(item[3]) if item[3] else 0.0
                 self.location.must.ns = item[4]
@@ -162,37 +167,55 @@ class Driver(Thread):
                 self.location.must.sog = float(item[7]) if item[7] else 0.0
                 self.location.must.cog = float(item[8]) if item[8] else 0.0
                 self.location.must.mode = item[12]
-
-                self.at = jst
-                # self.counter += 1
+            else:
+                # self.logger.debug(msg='Not valid')
+                pass
+            return valid
 
         def atGGA():
 
+            valid: bool = False
+
             if item[6] != '0':
+                valid = True
                 self.location.plus.sats = int(item[7]) if item[7] else 0
                 self.location.plus.alt = float(item[9]) if item[9] else 0.0
 
+            return valid
+
         def atVTG():
 
+            valid: bool = False
+
             if item[9] != 'N':
+                valid = True
                 self.location.plus.kmh = float(item[7]) if item[7] else 0.0
+
+            return valid
 
         def atGSA():
 
+            valid: bool = False
+
             if item[2] != '1':
+                valid = True
                 self.location.plus.dop.p = float(item[4]) if item[4] else 0.0
                 self.location.plus.dop.h = float(item[5]) if item[5] else 0.0
                 self.location.plus.dop.v = float(item[6]) if item[6] else 0.0
 
+            return valid
+
         def atTXT():
 
+            valid: bool = False
             # self.logger.debug(msg=item[4])
-            pass
+            return valid
 
         def atZDA():
 
+            valid: bool = False
             # self.logger.debug(msg=item[4])
-            pass
+            return valid
 
         window: Dict[str, any] = {
             'RMC': atRMC,
@@ -208,9 +231,10 @@ class Driver(Thread):
                 self.logger.debug(msg=item)
             suffix = item[0][2:]
             if suffix in window.keys():
-                window[suffix]()
+                valid: bool = window[suffix]()
                 if suffix == self.cs:
-                    self.counter += 1
+                    if valid:
+                        self.counter += 1
         except (IndexError, ValueError) as e:
             self.logger.error(msg=e)
         else:
@@ -289,6 +313,8 @@ class Sender(Thread):
 
     def upload(self, *, content: str) -> bool:
 
+        # pprint(content)
+
         success: bool = True
         try:
             response = requests.post(self.url, data=content, headers=self.headers, timeout=1.0)
@@ -316,16 +342,18 @@ class Sender(Thread):
                 if (dt.now() - self.lastFeedAT).total_seconds() > self.retryPassedSecs:
                     self.logger.debug('Holding %d record(s)' % len(self.feedFIFO))
                     if self.session():
-                        self.logger.debug(msg='Success')
+                        pass
+                        # self.logger.debug(msg='Success')
 
     def session(self) -> bool:
         success: bool = False
+        many: int =len(self.feedFIFO)
         with self.locker:
             content: str = json.dumps(self.feedFIFO, indent=0)
             if self.upload(content=content):
-                self.lastFeedAT = dt.now()
                 self.feedFIFO.clear()
                 success = True
+                self.logger.debug(msg='Success (%d)' % many)
         self.led.qp.put('typeA' if success else 'typeB')
         return success
 
@@ -335,18 +363,20 @@ class Sender(Thread):
 
             src = self.sq.get()
             with self.locker:
-                if len(self.feedFIFO) == self.maxHolds:  # buffer full?
+                many: int = len(self.feedFIFO)
+                if many == self.maxHolds:  # buffer full?
                     del (self.feedFIFO[0])
                     self.logger.critical(msg='feed buffer FULL (%d)' % self.maxHolds)
                 self.feedFIFO.append(src.copy())  # notice! use copy
             if self.session():
-                # self.logger.debug(msg='Success')
+                # self.logger.debug(msg='Success (%d)' % many)
                 pass
+            self.lastFeedAT = dt.now()
 
 
 class GPSFeeder(object):
 
-    def __init__(self, *, port: str, baudrate: int, account: str, url: str, dump: bool, cs: str):
+    def __init__(self, *, port: str, baudrate: int, number: str, url: str, dump: bool, cs: str):
 
         self.logger = getLogger('Log')
 
@@ -354,17 +384,14 @@ class GPSFeeder(object):
         self.port = port
         self.baudrate = baudrate
         self.url = url
-        self.account = account
+        self.number = number
         self.cs = suffix
 
         self.ready: bool = True
         self.loopCounter: int = 0
         self.sends: int = 0
         self.report: Dict[str, any] = {
-            'counter': 0,
-            'at': '',
-            'status': True,
-            'account': account,
+            'number': number,
             'location': '',
         }
         self.qp = Queue()
@@ -397,12 +424,9 @@ class GPSFeeder(object):
 
             self.intervalSecs: int = 1
 
-    def sendThis(self, *, status: bool = True):
+    def sendThis(self):
 
-        self.report['status'] = status
-        self.report['counter'] = self.sends
         self.report['location'] = asdict(self.driver.location)
-        self.report['at'] = self.driver.at
         self.sq.put(self.report)
         self.sends += 1
 
@@ -419,7 +443,7 @@ class GPSFeeder(object):
 
     def mainLoop(self):
 
-        self.logger.info(msg='Start on %s:%d %s@%s' % (self.port, self.baudrate, self.account, self.url))
+        self.logger.info(msg='Start on %s:%d %s@%s' % (self.port, self.baudrate, self.number, self.url))
 
         lastCounter: int = 0
         timing: int = 1
@@ -459,8 +483,7 @@ class GPSFeeder(object):
                         isGPS = False
                         timing = 1
                         lastTiming = 1
-                        # self.sendThis(status=False)
-                        self.logger.debug(msg='GPS lost')
+                        self.logger.critical(msg='GPS lost')
                     else:
                         # self.logger.debug(msg='Waiting (%d)' % (self.loopCounter,))
                         pass
@@ -477,31 +500,27 @@ class GPSFeeder(object):
 if __name__ == '__main__':
 
     version: str = '1.0'
-
-    account: str = 'sekitakovich'
-    # url: str = 'http://127.0.0.1:8080/post'
-    url: str = 'http://192.168.3.6/post'
-    # port: str = '/dev/ttyACM0'
-    port: str = '/dev/ttyUSB0'
-    baudrate: int = 9600
     suffix: str = 'RMC'
 
-    parser = argparse.ArgumentParser(description='GPS autofeeder')
-    parser.add_argument('-p', '--port', help='port name for sensor service (%s)' % port, type=str, default=port)
-    parser.add_argument('-b', '--baudrate', help='baudrate for sensor service (%d)' % baudrate, type=int,
-                        default=baudrate)
-    parser.add_argument('-u', '--url', help='url for locationserver (%s)' % url, type=str, default=url)
-    parser.add_argument('-a', '--account', help='account for locationserver (%s)' % account, type=str, default=account)
-    parser.add_argument('-s', '--suffix', help='suffix of cycle period (%s)' % suffix, type=str, default=suffix)
-    parser.add_argument('-d', '--dump', help='dump sentence realtime', action='store_true')
-    parser.add_argument('-v', '--version', help='print version', action='version', version=version)
+    argParser = argparse.ArgumentParser(description='GPS autofeeder')
+    argParser.add_argument('-s', '--suffix', help='suffix of cycle period (%s)' % suffix, type=str, default=suffix)
+    argParser.add_argument('-d', '--dump', help='dump sentence realtime', action='store_true')
+    argParser.add_argument('-v', '--version', help='print version', action='version', version=version)
 
-    args = parser.parse_args()
+    args = argParser.parse_args()
+
+    iniParser = configparser.ConfigParser()
+    iniParser.read('config.ini')
+
+    number: str = iniParser['Equipment']['serialnumber']
+    url: str = iniParser['Setting']['url']
+    port: str = iniParser['Setting']['port']
+    baudrate: int = int(iniParser['Setting']['baudrate'])
 
     LogConfigure(file='logs/client.log')
 
-    feeder = GPSFeeder(port=args.port, baudrate=args.baudrate,
-                       account=args.account, url=args.url, dump=args.dump, cs=args.suffix)
+    feeder = GPSFeeder(port=port, baudrate=baudrate, number=number, url=url,
+                       dump=args.dump, cs=args.suffix)
 
     if feeder.ready:
         feeder.mainLoop()
