@@ -5,8 +5,10 @@ import adafruit_adxl34x
 from threading import Thread
 import logging
 
+from led import LEDController
 
-class Motion(Thread):
+
+class Motion(Thread):  # for ADXL345
 
     def __init__(self, *, address: int = 0x53, threshold: int = 18):
         super().__init__()
@@ -15,6 +17,11 @@ class Motion(Thread):
 
         self.active: bool = True
         self.checkInterval = 1
+
+        self.led = LEDController(pin=21)
+        self.led.start()
+        # thisBoard = board
+        # print(thisBoard)
 
         i2c = busio.I2C(scl=board.SCL, sda=board.SDA)
         self.accelerometer = adafruit_adxl34x.ADXL345(i2c, address=address)
@@ -25,8 +32,9 @@ class Motion(Thread):
             current: bool = self.accelerometer.events['motion']
             if self.active != current:
                 self.active = current
-                self.logger.debug(msg='change to Active' if current else 'Stop')
-            time.sleep(self.checkInterval)
+                self.led.qp.put('on' if current else 'off')
+                # self.logger.debug(msg='change to Active' if current else 'Stationary ...')
+            time.sleep(self.checkInterval if current else self.checkInterval/2)
 
 
 if __name__ == '__main__':
