@@ -18,6 +18,7 @@ import RPi.GPIO as GPIO
 from pprint import pprint
 
 from log import LogConfigure
+from motion import Motion
 
 
 @dataclass()
@@ -446,6 +447,7 @@ class GPSFeeder(object):
             self.receiver = Receiver(sp=sp, qp=self.qp)
             self.driver = Driver(sp=sp, qp=self.qp, dump=self.dump, cs=self.cs)
             self.sender = Sender(url=url, sq=self.sq)
+            self.motion = Motion(address=0x1D, threshold=18)
             self.led = LEDController(pin=26)
 
             self.intervalSecs: int = 1
@@ -479,21 +481,22 @@ class GPSFeeder(object):
         self.receiver.start()
         self.driver.start()
         self.sender.start()
+        self.motion.start()
         self.led.start()
-
-        # time.sleep(self.intervalSecs)
-
-        # self.sendThis()
 
         while True:
 
             try:
-                measuredCunter = self.driver.counter
-                if measuredCunter != lastCounter:  # changed
+                # print(self.motion.isMoving)
+                thisCounter = self.driver.counter
+                if thisCounter != lastCounter:  # changed
                     self.led.qp.put('typeA')
                     isGPS = True
                     if (self.loopCounter % timing) == 0:
-                        self.sendThis()
+                        if self.motion.active:
+                            self.sendThis()
+                        else:
+                            self.logger.debug(msg='not in active ...')
                     else:
                         pass
                     timing = self.calcTiming(kmh=int(self.driver.location.plus.kmh))
@@ -502,7 +505,7 @@ class GPSFeeder(object):
                         lastTiming = timing
                     else:
                         pass
-                    lastCounter = measuredCunter
+                    lastCounter = thisCounter
                 else:
                     self.led.qp.put('typeB')
                     if isGPS:
