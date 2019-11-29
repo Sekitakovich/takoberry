@@ -5,6 +5,7 @@ import adafruit_adxl34x
 from threading import Thread
 import logging
 
+from constants import Constants
 from led import LEDController
 
 
@@ -15,8 +16,9 @@ class Motion(Thread):  # for ADXL345
         self.daemon = True
         self.logger = logging.getLogger('Log')
 
-        self.active: bool = True
-        self.checkInterval = 1
+        self.active: bool = False
+        self.shortInterval = 0.25
+        self.longInterval = 15
 
         self.led = LEDController(pin=21)
         self.led.start()
@@ -34,7 +36,7 @@ class Motion(Thread):  # for ADXL345
                 self.active = current
                 self.led.qp.put('on' if current else 'off')
                 # self.logger.debug(msg='change to Active' if current else 'Stationary ...')
-            time.sleep(self.checkInterval if current else self.checkInterval/2)
+            time.sleep(self.longInterval if current else self.shortInterval)
 
 
 if __name__ == '__main__':

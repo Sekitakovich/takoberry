@@ -16,6 +16,7 @@ import argparse
 import configparser
 from pprint import pprint
 
+from constants import Constants
 from log import LogConfigure
 from led import LEDController
 from motion import Motion
@@ -69,8 +70,8 @@ class Driver(Thread):
         self.qp = qp
         self.cs = cs  # cycle suffix
 
-        self.GPSdatetimeFormat: str = '%d-%d-%d %d:%d:%d'
-        self.SYSdatetimeformat: str = '%Y-%m-%d %H:%M:%S'
+        self.GPSdatetimeFormat = Constants.GPSdatetimeFormat
+        self.SYSdatetimeformat = Constants.SYSdatetimeformat
 
         self.dump = dump
         self.counter: int = 0
@@ -264,7 +265,7 @@ class Sender(Thread):
 
     def session(self) -> bool:
         success: bool = False
-        many: int =len(self.feedFIFO)
+        many: int = len(self.feedFIFO)
         with self.locker:
             content: str = json.dumps(self.feedFIFO, indent=0)
             if self.upload(content=content):
@@ -353,13 +354,14 @@ class GPSFeeder(object):
         self.baudrate = baudrate
         self.url = url
         self.number = number
-        self.cs = suffix
+        self.cs = cs
 
         self.ready: bool = True
         self.loopCounter: int = 0
         self.sends: int = 0
         self.report: Dict[str, any] = {
             'number': number,
+            'bootup': dt.now().strftime(Constants.SYSdatetimeformat),
             'location': '',
         }
         self.qp = Queue()
@@ -388,7 +390,7 @@ class GPSFeeder(object):
             self.receiver = Receiver(sp=sp, qp=self.qp)
             self.driver = Driver(sp=sp, qp=self.qp, dump=self.dump, cs=self.cs)
             self.sender = Sender(url=url, sq=self.sq)
-            self.motion = Motion(address=0x1D, threshold=20)  # 歩行ならこの程度だがクルマだと30以上か
+            self.motion = Motion(address=Constants.adxl345.address, threshold=Constants.adxl345.threshold)
             self.led = LEDController(pin=26)
 
             self.intervalSecs: int = 1
@@ -434,7 +436,7 @@ class GPSFeeder(object):
                     self.led.qp.put('typeA')
                     isGPS = True
                     if (self.loopCounter % timing) == 0:
-                        if self.motion.active:
+                        if self.driver.location.plus.kmh > 25 or self.motion.active:
                             self.sendThis()
                         else:
                             self.logger.debug(msg='not in active ...')
@@ -462,6 +464,7 @@ class GPSFeeder(object):
                 self.loopCounter += 1
             except (KeyboardInterrupt,) as e:
                 self.led.end()
+                print()  # ちょっとした気遣い
                 break
             else:
                 pass
