@@ -16,9 +16,6 @@ class Luminance(object):  # for TSL2561
     def lux(self) -> float:
         return self.tsl.lux
 
-    def luminosity(self) -> tuple:
-        return self.tsl.luminosity
-
 
 if __name__ == '__main__':
     sensor = Luminance()
@@ -26,9 +23,10 @@ if __name__ == '__main__':
     while True:
 
         try:
-            print(sensor.tsl.lux)
-            # print(sensor.tsl.luminosity)
+            print(sensor.lux())
         except KeyboardInterrupt as e:
-            print()
+            break
         else:
             time.sleep(1)
+
+    print()

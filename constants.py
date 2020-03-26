@@ -4,7 +4,7 @@ from dataclasses import dataclass
 @dataclass()
 class ADXL345(object):
     address: int = 0x1D
-    threshold: int = 25  # 環境に応じて設定可能とすべく可変抵抗から読み込みたい
+    threshold: int = 60  # 環境に応じて設定可能とすべく可変抵抗から読み込みたい
 
 
 @dataclass()

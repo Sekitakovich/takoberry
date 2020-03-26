@@ -11,10 +11,14 @@ from led import LEDController
 
 class Motion(Thread):  # for ADXL345
 
-    def __init__(self, *, address: int = 0x53, threshold: int = 18):
+    def __init__(self, *, address: int = 0x53, threshold: int = 18, vervose: bool = False):
+
         super().__init__()
         self.daemon = True
+        self.vervose = vervose
         self.logger = logging.getLogger('Log')
+
+        self.logger.debug('threshold = %d' % threshold)
 
         self.active: bool = False
         self.shortInterval = 0.25
@@ -22,6 +26,7 @@ class Motion(Thread):  # for ADXL345
 
         self.led = LEDController(pin=21)
         self.led.start()
+        self.led.qp.put('off')
         # thisBoard = board
         # print(thisBoard)
 
@@ -33,6 +38,8 @@ class Motion(Thread):  # for ADXL345
         while True:
             current: bool = self.accelerometer.events['motion']
             if self.active != current:
+                if self.vervose:
+                    print(current)
                 self.active = current
                 self.led.qp.put('on' if current else 'off')
                 # self.logger.debug(msg='change to Active' if current else 'Stationary ...')
@@ -41,7 +48,7 @@ class Motion(Thread):  # for ADXL345
 
 if __name__ == '__main__':
 
-    motion = Motion(address=0x1D)
+    motion = Motion(address=0x1D, vervose=True)
     motion.start()
 
     while True:
