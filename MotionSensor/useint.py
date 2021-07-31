@@ -5,11 +5,9 @@ from loguru import logger
 
 class Sample(object):
     '''
-    https://jp.broadcom.com/products/optical-sensors/integrated-ambient-light-and-proximity-sensors/apds-9960
-    https://rikeden.net/?p=120
+    pigpioのcallback
     '''
-    def __init__(self, *, i2cAddress: int = 0x39, intPin: int = 17, needPullUp: bool = True):
-        self.address = i2cAddress
+    def __init__(self, *, intPin: int = 17, needPullUp: bool = True):
         self.intPin = intPin
         self.needPullUp = needPullUp
 
@@ -68,11 +66,13 @@ if __name__ == '__main__':
             else:
                 counter += 1
                 logger.info(f'counter {counter}')
-                U = S.read(register=0xFC, length=1)
-                D = S.read(register=0xFD, length=1)
-                L = S.read(register=0xFE, length=1)
-                R = S.read(register=0xFF, length=1)
-                logger.debug(f'U:D:L:R = [{U} {D} {L} {R}]')
+                G = S.read(register=0xFC, length=4)
+                logger.debug(G)
+                # U = S.read(register=0xFC, length=1)
+                # D = S.read(register=0xFD, length=1)
+                # L = S.read(register=0xFE, length=1)
+                # R = S.read(register=0xFF, length=1)
+                # logger.debug(f'U:D:L:R = [{U} {D} {L} {R}]')
         pass
 
 

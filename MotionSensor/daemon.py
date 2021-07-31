@@ -1,35 +1,38 @@
 import time
-import RPi.GPIO as GPIO
+import pigpio
 from loguru import logger
 
 
 class Sample(object):
     '''
-    RPi.GPIO
+    pigpiod -l # -mをつけるとcallbackが効かない!
     GPIO --- タクトスイッチ --- GND
-    bouncetimeはアテにならないのでチャタリング対策は外でやるべし
+    チャタリングで0と1がバラっと続くが試験なので
     '''
 
     def __init__(self, *, intPin: int = 17, needPullUp: bool = True):
         self.intPin = intPin
         self.needPullUp = needPullUp
 
+        self.pi = pigpio.pi()
+
+        self.pi.set_mode(self.intPin, mode=pigpio.INPUT)  # 入力に設定
+        if self.needPullUp:
+            self.pi.set_pull_up_down(self.intPin, pigpio.PUD_UP)  # 内蔵プルアップを有効にする
+            logger.debug(f'with PULLUP')
         self.counter = 0
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(self.intPin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.add_event_detect(self.intPin, GPIO.BOTH, callback=self.handler, bouncetime=5)
+        cb = self.pi.callback(self.intPin, pigpio.EITHER_EDGE, self.handler)
+        # logger.info(cb)
 
     def readValue(self) -> int:
-        return GPIO.input(self.intPin)
+        return self.pi.read(self.intPin)
 
-    def handler(self, pin):
-        value = self.readValue()
-        logger.debug(f'[{self.counter}] {pin} = {value}')
+    def handler(self, gpio, level, tick):
+        logger.debug(f'[{self.counter}] G={gpio} L={level}, T={tick}')
         self.counter += 1
 
     def close(self):
-        GPIO.remove_event_detect(self.intPin)
-        GPIO.cleanup()
+        self.pi.stop()
         logger.info(f'Bye!')
 
 
